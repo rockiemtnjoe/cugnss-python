@@ -41,6 +41,10 @@ def generate_ca_code(PRN):
     The g2s vector holds the appropriate shift of the g2 code to generate
     the C/A code (ex. for SV#19 - use a G2 shift of g2s[18] = 471)
     """
+    if (PRN >= 87) and (PRN <= 105):
+        PRN = PRN - 87
+    elif (PRN > 32) or (PRN < 1):
+        raise ValueError (f"PRN {PRN} outside known range")
 
     g2s = [
           5,   6,   7,   8,  17,  18, 139, 140, 141, 251,

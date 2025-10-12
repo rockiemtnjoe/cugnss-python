@@ -118,6 +118,9 @@ def postProcessing(settings):
         # Save acquisition results
         np.save("acqResults.npy", acqResults)
         print('   Acquisition results saved to acqResults.npy')
+        if settings.plotAcquisition:
+            plotAcquisition(acqResults)
+            print('Acquisition plot saved')
         
     else:
         # Load the npy file
@@ -170,10 +173,9 @@ def postProcessing(settings):
 
     # %% Plot all results ===================================================
     print('   Plotting results...')
-    if settings.plotAcquisition:
-        plotAcquisition(acqResults)
     if settings.plotTracking:
-        plotTracking(range(1, settings.numberOfChannels + 1), trkResults, settings)
+        #plotTracking(range(1, settings.numberOfChannels + 1), trkResults, settings)
+        plotTracking(range(settings.numberOfChannels), trkResults, settings)
     if settings.plotNavigation:
         plotNavigation(navResults, settings)
     print('Post processing of the signal is over.')

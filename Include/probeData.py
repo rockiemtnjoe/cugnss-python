@@ -159,4 +159,4 @@ def probeData(settings: Settings):
         plt.grid(True)
 
     plt.tight_layout()
-    plt.show()
+    plt.show(block=False)

@@ -3,12 +3,16 @@ import numpy as np
 def pre_run(acq_results, settings):
     """
     Initializes tracking channels from acquisition data. The acquired
-    signals are sorted according to the signal strength. This function can be
+    signals are sorted according to the signal strength. Only the SVs in LEO
+    (with PRN 1 to 32) are tracked - WAAS signals are not tracked.
+    
+    This function can be
     modified to use other satellite selection algorithms or to introduce
     acquired signal properties offsets for testing purposes.
 
     Args:
-        acq_results (dict): results from acquisition.
+        acq_results (dict): results from acquisition.  Each item in the dictionary
+                            is an array.
         settings: receiver settings
     Returns:
         List[dict]: List of channel dictionaries with initial tracking setup
@@ -43,21 +47,44 @@ def pre_run(acq_results, settings):
         "status": '-',
     }
 
-    # Create list of default channels
-    channels = [channel_template.copy() for _ in range(settings.numberOfChannels)]
-
     # Sort peaks to find strongest signals, keep the peak index information
-    sorted_prns = np.argsort(acq_results["peakMetric"])[::-1]
+    sorted_idx = np.argsort(acq_results["peakMetric"])[::-1]
 
-    # Maximum number of initialized channels is number of detected signals, but
-    # not more as the number of channels specified in the settings.
-    num_to_init = min(settings.numberOfChannels, np.sum(acq_results["carrFreq"] != 0))
+    # Now sort through the acquired signals to ensure they are actual 
+    # orbiting LEO satellites, not WAAS satellites.
 
-    for ii in range(num_to_init):
-        prn = sorted_prns[ii]
-        channels[ii]["PRN"] = prn + 1  # MATLAB is 1-indexed
-        channels[ii]["acquiredFreq"] = acq_results["carrFreq"][prn]
-        channels[ii]["codePhase"] = acq_results["codePhase"][prn]
-        channels[ii]["status"] = 'T'  # Tracking state
+    # Ensure PRNs are a NumPy array before advanced indexing
+    prns = np.asarray(acq_results["PRN"])
+    sorted_prn_channels = prns[sorted_idx]  
+
+    # Keep only PRNs 1..32 
+    allowed_prns = np.arange(1, 33)
+    mask = np.isin(sorted_prn_channels, allowed_prns)
+    filtered_prns = sorted_prn_channels[mask]      # <- apply the mask to get values
+    keep_idx = sorted_idx[mask]
+
+    # Now build a new list of the channel tracking information, with 
+    # each element in the list describing the signal to be tracked.
+ 
+    rows = keep_idx[0:settings.numberOfChannels]
+    channels = []
+
+    for row in rows:
+        channels.append({
+            "PRN": int(acq_results["PRN"][row]),
+            "acquiredFreq": float(acq_results["carrFreq"][row]),
+            "codePhase": int(acq_results["codePhase"][row]),
+            "status": "T",
+        })
+        print (f"PRN{int(acq_results["PRN"][row])} will be tracked - "
+               f"peakMetric = {acq_results["peakMetric"][row]:.2f}"
+        )
+
+    # pad with defaults if fewer rows than channels
+    # This really shouldn't be necessary; subsequent processes should be able to take
+    # a list of arbitrary length.
+    #
+    while len(channels) < settings.numberOfChannels:
+        channels.append(channel_template.copy())
 
     return channels

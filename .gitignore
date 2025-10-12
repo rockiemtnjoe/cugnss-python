@@ -1,0 +1,22 @@
+# Virtual envs
+.venv/
+venv/
+
+# Python noise
+__pycache__/
+Include/__pycache__/
+Common/__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# Binary arrays
+*.npy
+*.npz
+
+# OS/editor
+.DS_Store
+.vscode/
+

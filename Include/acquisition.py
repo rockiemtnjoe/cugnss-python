@@ -1,6 +1,7 @@
 import numpy as np
-from Include.makeCaTable import make_ca_table  # You need to implement or import this
-from Include.generateCAcode import generate_ca_code  # You need to implement or import this
+from Include.makeCaTable import make_ca_table  
+from Include.generateCAcode import generate_ca_code  
+from Include.plotAcqSearch import plotAcqSearch
 
 def acquisition(long_signal, settings):
     """
@@ -72,12 +73,13 @@ def acquisition(long_signal, settings):
     # Carrier frequencies of detected signals
     # C/A code phases of detected signals
     # Correlation peak ratios of the detected signals
+    numSats = len(settings.acqSatelliteList) + 1
     acqResults = {
-        'carrFreq': np.zeros(32),
-        'codePhase': np.zeros(32, dtype=int),
-        'peakMetric': np.zeros(32)
+        'PRN': np.zeros(numSats),
+        'carrFreq': np.zeros(numSats),
+        'codePhase': np.zeros(numSats, dtype=int),
+        'peakMetric': np.zeros(numSats)
     }
-
     #--------------------------------------------------------------------------
     # Variables for fine acquisition
     #--------------------------------------------------------------------------
@@ -101,25 +103,40 @@ def acquisition(long_signal, settings):
     #--------------------------------------------------------------------------
     # Perform search for all listed PRN numbers ...
     #--------------------------------------------------------------------------
+
+    # TBD: It would be more efficient to compute the frequency bins
+    # in advance and store them as an array
+
+    start_freq = settings.IF + settings.acqSearchBand
+    stop_freq = settings.IF - settings.acqSearchBand
+    num_freq = 2 * int(settings.acqSearchBand / settings.acqSearchStep) + 1
+    
+    # Create a vector with all the frequencies we will search through
+    coarse_freq_bins = np.linspace(start_freq, stop_freq, num_freq)         
+
+
     print('(', end='', flush=True)
-    for PRN in settings.acqSatelliteList:
+    for n in range(numSats - 1):
         #--------------------------------------------------------------------------
         # Coarse acquisition
         #--------------------------------------------------------------------------
         # Generate C/A codes and sample them according to the sampling freq.
-        ca_codes_table = make_ca_table(PRN, settings)
+        ca_codes_table = make_ca_table(settings.acqSatelliteList[n], settings)
         ca_codes_2ms = np.concatenate([ca_codes_table, np.zeros(samples_per_code)])
         # Search results of all frequency bins and code shifts (for one satellite)
         results = np.zeros((number_of_freq_bins, samples_per_code * 2))
         # Perform DFT of C/A code
         ca_code_freq_dom = np.conj(np.fft.fft(ca_codes_2ms))
 
-        # Make the correlation for all frequency bins
-        for freq_bin_index in range(number_of_freq_bins):
+        # Test the correlation for each frequency bin
+        # this is the pythonic way of iterating over all possible frequencies
+        # freq_idx goes from 0 to num_freq-1
+        # coarse_freq counts through the test frequencies
+        for freq_idx, coarse_freq in enumerate(coarse_freq_bins):
             # Generate carrier wave frequency grid
-            coarse_freq_bin[freq_bin_index] = settings.IF + settings.acqSearchBand - settings.acqSearchStep * freq_bin_index
+            # coarse_freq_bin[freq_bin_index] = settings.IF + settings.acqSearchBand - settings.acqSearchStep * freq_bin_index
             # Generate local sine and cosine
-            sig_carr = np.exp(-1j * coarse_freq_bin[freq_bin_index] * phase_points)
+            sig_carr = np.exp(-1j * coarse_freq * phase_points)
             # Do correlation
             for non_coh_index in range(settings.acqNonCohTime):
                 idx_start = non_coh_index * samples_per_code
@@ -137,41 +154,46 @@ def acquisition(long_signal, settings):
                 # Perform inverse DFT and store correlation results
                 coh_result = np.abs(np.fft.ifft(conv_code_IQ))
                 # Non-coherent integration
-                results[freq_bin_index, :] += coh_result
+                results[freq_idx, :] += coh_result
 
         #--------------------------------------------------------------------------
         # Look for correlation peaks for coarse acquisition
         #--------------------------------------------------------------------------
         # Find the correlation peak and the carrier frequency
-        acq_coarse_bin = np.argmax(np.max(results, axis=1))
+        coarse_freq_idx = int(np.argmax(np.max(results, axis=1)))
+        coarse_freq = coarse_freq_bins[coarse_freq_idx]
         # Find code phase of the same correlation peak
         peak_size = np.max(results)
         code_phase = np.argmax(np.max(results, axis=0))
         # Store GLRT statistic
-        acqResults['peakMetric'][PRN-1] = peak_size / sig_power / settings.acqNonCohTime
+        acqResults['peakMetric'][n] = peak_size / sig_power / settings.acqNonCohTime
 
+        #
+        # Plot the coarse search results
+        #
+        plotAcqSearch(settings.acqSatelliteList[n],settings, results)
         #--------------------------------------------------------------------------
         # If the result is above threshold, then there is a signal ...
         # Fine carrier frequency search
         #--------------------------------------------------------------------------
-        if acqResults['peakMetric'][PRN-1] > settings.acqThreshold:
+        if acqResults['peakMetric'][n] > settings.acqThreshold:
             # Indicate PRN number of the detected signal
-            print(f'{PRN:02d} ', end='', flush=True)
+            print(f'{settings.acqSatelliteList[n]:02d} ', end='', flush=True)
             # Prepare 20ms code, carrier and input signals
-            ca_code = generate_ca_code(PRN)
+            ca_code = generate_ca_code(settings.acqSatelliteList[n])
             code_value_index = np.floor(ts * np.arange(40 * samples_per_code) / (1 / settings.codeFreqBasis)).astype(int)
             ca_code_40ms = ca_code[np.mod(code_value_index, settings.codeLength)]
-            # Take 40cm incoming signal for fine acquisition
-            sig_40cm = long_signal[code_phase:code_phase + 40 * samples_per_code]
+            # Take 40ms incoming signal for fine acquisition
+            sig_40ms = long_signal[code_phase:code_phase + 40 * samples_per_code]
             # Search different fine freq bins
             fine_result = np.zeros(num_of_fine_bins)
             for fine_bin_index in range(num_of_fine_bins):
                 # Carrier frequencies of the frequency bins
-                fine_freq_bins[fine_bin_index] = coarse_freq_bin[acq_coarse_bin] + settings.acqSearchStep / 2 - fine_search_step * fine_bin_index
+                fine_freq_bins[fine_bin_index] = coarse_freq - fine_search_step * fine_bin_index
                 # Local carrier signal
-                sig_carr_40cm = np.exp(-1j * fine_freq_bins[fine_bin_index] * fine_phase_points)
+                sig_carr_40ms = np.exp(-1j * fine_freq_bins[fine_bin_index] * fine_phase_points)
                 # Wipe off code and carrier from incoming signals
-                baseband_sig = sig_40cm * ca_code_40ms * sig_carr_40cm
+                baseband_sig = sig_40ms * ca_code_40ms * sig_carr_40ms
                 # Coherent integration for each code
                 sum_per_code = np.array([
                     np.sum(baseband_sig[i * samples_per_code:(i + 1) * samples_per_code])
@@ -187,12 +209,14 @@ def acquisition(long_signal, settings):
                 fine_result[fine_bin_index] = max_power
             # Find the fine carrier freq.
             max_fin_bin = np.argmax(fine_result)
-            acqResults['carrFreq'][PRN-1] = fine_freq_bins[max_fin_bin]
+            acqResults['carrFreq'][n] = fine_freq_bins[max_fin_bin]
             # Save code phase acquisition result
-            acqResults['codePhase'][PRN-1] = code_phase
+            acqResults['codePhase'][n] = code_phase
+            acqResults['PRN'][n] = settings.acqSatelliteList[n]
             # signal found, if IF =0 just change to 1 Hz to allow processing
-            if acqResults['carrFreq'][PRN-1] == 0:
-                acqResults['carrFreq'][PRN-1] = 1
+            if acqResults['carrFreq'][n] == 0:
+                acqResults['carrFreq'][n] = 1
+
         else:
             # No signal with this PRN
             print('. ', end='', flush=True)
